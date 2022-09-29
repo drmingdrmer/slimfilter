@@ -1,4 +1,4 @@
-use crate::builder::Bitmap;
+use crate::bitmap::Bitmap;
 use crate::traits::Filter;
 use crate::traits::Key;
 
