@@ -1,18 +1,13 @@
 use std::collections::BTreeSet;
-use std::fmt::rt::v1::Count::Param;
-use std::simd::simd_swizzle;
-use std::slice::from_ptr_range;
 
-use crate::bit_count;
 use crate::bitmap::Bitmap;
 use crate::filter::SlimFilter;
-use crate::next_multiple_of;
 use crate::traits::FilterBuilder;
 use crate::traits::Key;
+use crate::util::next_multiple_of;
 
 #[derive(Default)]
 struct BuildingParam {
-    prefix_bitmap_bits: u64,
     pref_bits: u64,
     suffix_bits: u64,
 
@@ -56,16 +51,15 @@ impl Builder {
     /// 1. split into 64 words groups
     /// 1. find min suffix size
     /// 2. for every group: build suffix
-    fn build_it(&mut self) -> Self::Filter {
+    fn build_it(&mut self) -> SlimFilter {
         //
 
-        self.param = BuildingParam {
-            prefix_bitmap_bits: bm_size,
-            pref_bits,
-            suffix_bits,
-            suffix_mask: (1 << suffix_bits) - 1,
-            word_bits,
-        };
+        // self.param = BuildingParam {
+        //     pref_bits,
+        //     suffix_bits,
+        //     suffix_mask: (1 << suffix_bits) - 1,
+        //     word_bits,
+        // };
 
         let n = self.keys.len() as u64;
 
@@ -85,11 +79,11 @@ impl Builder {
 
         // build suffix
 
-        let mut suffixes = Bitmap::new(max_suffix_bits * n_pow);
+        let mut suffixes = Bitmap::new(max_suffix_bits * n_pow, max_suffix_bits);
         for (i, seg) in segs.iter().enumerate() {
             for j in 0..64 {
                 let suffix = (seg.keys[j] >> word_bits) & ((1 << max_suffix_bits) - 1);
-                suffixes.push_word(i as u64 * 64 + j as u64, max_suffix_bits, suffix);
+                suffixes.push_word(suffix);
             }
         }
 
@@ -112,9 +106,9 @@ impl Builder {
         }
 
         // bulid partition index:
-        let mut partition_index = Bitmap::new(partition_key_bits * segs.len());
+        let mut partition_index = Bitmap::new(partition_key_bits * segs.len() as u64, partition_key_bits);
         for (i, pk) in partition_keys.iter().enumerate() {
-            partition_index.push_word(i as u64, partition_key_bits, pk >> (64 - partition_key_bits));
+            partition_index.push_word(pk >> (64 - partition_key_bits));
         }
 
         SlimFilter {
@@ -127,6 +121,7 @@ impl Builder {
 
     fn build_segments(&self) -> Vec<Segment> {
         let word_bits = self.n_next_pow().trailing_zeros() as u64;
+        let n = self.keys.len() as u64;
         let mut segs = Vec::with_capacity(next_multiple_of(n, 64) as usize / 64);
 
         let mut ks = [0; 64];
@@ -150,46 +145,6 @@ impl Builder {
             segs.push(seg);
         }
         segs
-    }
-
-    fn build_prefix_bitmap(&self) -> Vec<u64> {
-        assert!(self.keys.len() > 0);
-
-        let bm_size = self.param.prefix_bitmap_bits;
-
-        let pref_len = bm_size.trailing_zeros();
-
-        let word_count = bm_size / u64::BITS;
-        let mut bitmap = vec![0; word_count as usize];
-        for key in self.keys.iter() {
-            let pref = key >> (u64::BITS - pref_len);
-            bitmap[pref >> 6] |= 1 << (pref & 0xff);
-        }
-
-        bitmap
-    }
-
-    fn get_prefix(&self, key: u64) -> u64 {}
-
-    /// Returns an empty bitmap of at least `n` bits,
-    /// and bitmap of `n` k-bit words.
-    /// where `n = keys.len()`, `k` is suffix size
-    fn build_suffix_array(&self) -> (Bitmap, Bitmap) {
-        let n = self.keys.len() as u64;
-        let flag_bm_bits = next_multiple_of(n, 64);
-
-        let suffix_bits = self.false_positive_pow;
-
-        let flag_bm = Bitmap::new(flag_bm_bits);
-        let mut suffix_array = Bitmap::new(n * suffix_bits);
-
-        for (i, key) in self.keys.iter().enumerate() {
-            let word = key >> u64::BITS - self.param.word_bits;
-            let suffix = word & self.param.suffix_mask;
-            suffix_array.push_word(i as u64, self.param.suffix_bits, suffix);
-        }
-
-        (flag_bm, suffix_array)
     }
 
     /// Prefix bitmap size is the

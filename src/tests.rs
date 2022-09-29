@@ -1,4 +1,4 @@
-use crate::bit_count;
+use crate::util::bit_count;
 
 #[test]
 
