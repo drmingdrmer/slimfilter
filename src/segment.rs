@@ -1,5 +1,6 @@
 use crate::traits::Key;
 
+#[derive(Debug)]
 pub(crate) struct Segment {
     pub(crate) word_bits: u64,
     pub(crate) keys: Vec<Key>,
