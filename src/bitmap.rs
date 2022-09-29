@@ -49,7 +49,7 @@ impl Bitmap {
 
         if bit_index + self.word_bits > 64 {
             let v = self.bm[word_index] >> bit_index;
-            let left = (self.word_bits + 1 - bit_index);
+            let left = bit_index + self.word_bits - 64;
             let v2 = self.bm[word_index + 1] & ((1 << left) - 1);
             v | v2 << (64 - bit_index)
         } else {
@@ -57,16 +57,15 @@ impl Bitmap {
         }
     }
 
-    pub(crate) fn find(&self, word: u64) -> (u64, u64) {
-        //
-        let mut left = 0;
-        let mut right = self.word_count;
+    pub(crate) fn find(&self, word: u64) -> u64 {
+        let mut left: isize = -1;
+        let mut right = self.word_count as isize;
         let mut w = 0;
 
         while left < right - 1 {
             let mid = (left + right) / 2;
 
-            w = self.get_word(mid);
+            w = self.get_word(mid as u64);
 
             if word > w {
                 left = mid;
@@ -74,7 +73,7 @@ impl Bitmap {
                 right = mid;
             }
         }
-        (right, w)
+        right as u64
     }
 }
 
@@ -114,7 +113,58 @@ mod tests {
     }
 
     #[test]
-    fn test_push_word() {
-        //
+    fn test_push_get_word() {
+        {
+            // word size =3
+            let mut bm = Bitmap::new(64 * 3, 3);
+            bm.push_word(0b101);
+            bm.push_word(0b111);
+            bm.push_word(0b001);
+
+            assert_eq!(vec![0b001111101, 0b0, 0b0], bm.bm);
+            assert_eq!(3, bm.word_count);
+        }
+
+        {
+            // word size = 31
+            let mut bm = Bitmap::new(64 * 3, 31);
+            bm.push_word(0b101);
+            bm.push_word(0b111);
+            bm.push_word(0b111);
+
+            assert_eq!(
+                vec![
+                    (0b1100_0000_0000_0000_0000_0000_0000_0000 << 32) + 0b0011_1000_0000_0000_0000_0000_0000_0000_0101,
+                    0b1,
+                    0b0
+                ],
+                bm.bm
+            );
+            assert_eq!(3, bm.word_count);
+
+            assert_eq!(0b101, bm.get_word(0));
+            assert_eq!(0b111, bm.get_word(1));
+            assert_eq!(0b111, bm.get_word(2));
+            assert_eq!(0b0, bm.get_word(3));
+        }
+    }
+    #[test]
+    fn test_find_word() {
+        let mut bm = Bitmap::new(64 * 3, 31);
+        bm.push_word(0b0101);
+        bm.push_word(0b0111);
+        bm.push_word(0b1001);
+
+        assert_eq!(0, bm.find(0b0000));
+        assert_eq!(0, bm.find(0b0001));
+        assert_eq!(0, bm.find(0b0101));
+
+        assert_eq!(1, bm.find(0b0110));
+        assert_eq!(1, bm.find(0b0111));
+
+        assert_eq!(2, bm.find(0b1000));
+        assert_eq!(2, bm.find(0b1001));
+
+        assert_eq!(3, bm.find(0b1010));
     }
 }
