@@ -1,9 +1,9 @@
 use crate::util::next_multiple_of;
 
 pub(crate) struct Bitmap {
-    word_bits: u64,
-    word_count: u64,
-    bm: Vec<u64>,
+    pub(crate) word_bits: u64,
+    pub(crate) word_count: u64,
+    pub(crate) bm: Vec<u64>,
 }
 
 impl Bitmap {
@@ -134,7 +134,8 @@ mod tests {
 
             assert_eq!(
                 vec![
-                    (0b1100_0000_0000_0000_0000_0000_0000_0000 << 32) + 0b0011_1000_0000_0000_0000_0000_0000_0000_0101,
+                    (0b1100_0000_0000_0000_0000_0000_0000_0000 << 32)
+                        + 0b0011_1000_0000_0000_0000_0000_0000_0000_0101,
                     0b1,
                     0b0
                 ],

@@ -14,7 +14,8 @@ struct BuildingParam {
     /// ceil(log2(cardinality))
     cardinality_pow: u64,
 
-    pref_bits: u64,
+    partition_key_bits: u64,
+    partition_key_mask: u64,
     suffix_bits: u64,
     suffix_mask: u64,
 
@@ -67,7 +68,8 @@ impl Builder {
         self.init_suffix_param(&segs);
         let suffixes = self.build_suffixes(&segs);
 
-        // Find partition key bits
+        self.init_partition_param(&segs);
+        self.build_partition_keys(&segs);
 
         // build partition keys:
 
@@ -158,6 +160,33 @@ impl Builder {
         suffixes
     }
 
+    fn build_partition_keys(&self, segs: &[Segment]) -> Bitmap {
+        let mut partition_keys = Bitmap::new(
+            self.param.partition_key_bits * segs.len() as u64,
+            self.param.partition_key_bits,
+        );
+
+        for seg in segs.iter() {
+            partition_keys.push_word(seg.keys[0] >> (64 - self.param.partition_key_bits));
+        }
+
+        partition_keys
+    }
+
+    /// Use the max common prefix length of every segment,
+    /// guarantees that all these prefixes are ascending.
+    fn init_partition_param(&mut self, segs: &[Segment]) {
+        let mut partition_key_bits = 0;
+        for seg in segs.iter() {
+            let s = seg.big_suffix_bits();
+            let p = self.param.word_bits - s;
+            partition_key_bits = std::cmp::max(partition_key_bits, p);
+        }
+
+        self.param.partition_key_bits = partition_key_bits;
+        self.param.partition_key_mask = (1 << partition_key_bits) - 1;
+    }
+
     fn init_param(&mut self) -> &BuildingParam {
         let n = self.keys.len() as u64;
         let n_pow = self.n_next_pow().trailing_zeros() as u64;
@@ -169,8 +198,9 @@ impl Builder {
             cardinality_pow: n_pow,
             word_bits,
 
-            // TODO
-            pref_bits: 0,
+            // uninitialized
+            partition_key_bits: 0,
+            partition_key_mask: 0,
             suffix_bits: 0,
             suffix_mask: 0,
         };
@@ -296,6 +326,8 @@ mod tests {
         let shift = 64 - word_bits;
 
         let mut b = Builder::new(5);
+        // 123456789012
+        //  ----------- suffix
 
         for i in 1..67 {
             b.add_keys(&[i << shift]);
@@ -310,5 +342,59 @@ mod tests {
         let suffixes = b.build_suffixes(&segs);
 
         assert_eq!(0b000_0001_0000, suffixes.get_word(0));
+        assert_eq!(0b100_0000_0000, suffixes.get_word(63));
+        assert_eq!(0b100_0010_0000, suffixes.get_word(65));
+    }
+
+    #[test]
+    fn test_init_partition_param() {
+        let word_bits = 8;
+        let shift = 64 - word_bits;
+
+        let mut b = Builder::new(5);
+
+        for i in 1..67 {
+            b.add_keys(&[i << shift]);
+        }
+        let p = b.init_param();
+        assert_eq!(12, p.word_bits);
+
+        let segs = b.build_segments();
+        println!("segs[0]: suffix bits: {}", segs[0].big_suffix_bits());
+        println!("segs[1]: suffix bits: {}", segs[1].big_suffix_bits());
+
+        b.init_partition_param(&segs);
+        assert_eq!(6, b.param.partition_key_bits);
+    }
+
+    #[test]
+    fn test_build_partition_keys() {
+        let word_bits = 8;
+        let shift = 64 - word_bits;
+
+        let mut b = Builder::new(5);
+
+        for i in 1..67 {
+            b.add_keys(&[i << shift]);
+        }
+        let p = b.init_param();
+        assert_eq!(12, p.word_bits);
+
+        let segs = b.build_segments();
+        println!("segs[0]: suffix bits: {}", segs[0].big_suffix_bits());
+        println!("segs[1]: suffix bits: {}", segs[1].big_suffix_bits());
+
+        b.init_partition_param(&segs);
+        assert_eq!(6, b.param.partition_key_bits);
+
+        let pks = b.build_partition_keys(&segs);
+        assert_eq!(2, pks.word_count);
+
+        // 01000000
+        // --------
+        // 01234567----
+
+        assert_eq!(0, pks.get_word(0));
+        assert_eq!(0b010000, pks.get_word(1));
     }
 }
