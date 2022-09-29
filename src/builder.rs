@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::bitmap::Bitmap;
 use crate::filter::SlimFilter;
+use crate::segment::Segment;
 use crate::traits::FilterBuilder;
 use crate::traits::Key;
 use crate::util::next_multiple_of;
@@ -153,36 +154,5 @@ impl Builder {
         let prefix_bitmap_bit = n.next_power_of_two();
 
         prefix_bitmap_bit as u64
-    }
-}
-
-pub(crate) struct Segment {
-    word_bits: u64,
-    keys: Vec<Key>,
-}
-
-impl Segment {
-    pub(crate) fn new(word_bits: u64, keys: &[Key]) -> Self {
-        // TODO: assert keys are sorted
-        Self {
-            word_bits,
-            keys: keys.to_vec(),
-        }
-    }
-
-    pub(crate) fn common_prefix_bits(&self) -> u64 {
-        //
-        let a = self.keys[0];
-        let b = self.keys[63];
-        let c = a ^ b;
-        c.leading_zeros() as u64
-    }
-    pub(crate) fn big_suffix_bits(&self) -> u64 {
-        self.word_bits - self.common_prefix_bits()
-    }
-
-    pub(crate) fn suffix_bits(&self) -> u64 {
-        // skip prefix and a 6-bit bitmap(size=64)
-        self.word_bits - self.common_prefix_bits() - 6
     }
 }
