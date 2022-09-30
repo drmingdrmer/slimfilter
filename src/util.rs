@@ -1,4 +1,4 @@
-pub(crate) fn bit_count<T>(v: &T) -> u64 {
+pub(crate) fn bit_count<T>(_v: &T) -> u64 {
     (std::mem::size_of::<T>() * 8) as u64
 }
 

@@ -6,3 +6,8 @@ pub(crate) mod traits;
 pub(crate) mod util;
 
 #[cfg(test)] mod tests;
+
+pub use builder::Builder;
+pub use filter::SlimFilter;
+pub use traits::Filter;
+pub use traits::FilterBuilder;

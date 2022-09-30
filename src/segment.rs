@@ -20,10 +20,13 @@ impl Segment {
             // Fill with last key
             let mut ks = Vec::with_capacity(64);
             ks.extend_from_slice(keys);
-            for i in keys.len()..64 {
+            for _i in keys.len()..64 {
                 ks.push(keys[keys.len() - 1]);
             }
-            Self { word_bits, keys: ks }
+            Self {
+                word_bits,
+                keys: ks,
+            }
         }
     }
 
@@ -48,6 +51,7 @@ impl Segment {
         self.word_bits - self.common_prefix_bits()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn suffix_bits(&self) -> u64 {
         // skip prefix and a 6-bit bitmap(size=64)
         self.word_bits - self.common_prefix_bits() - 6

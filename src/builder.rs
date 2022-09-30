@@ -16,6 +16,7 @@ struct BuildingParam {
 
     partition_key_bits: u64,
     partition_key_mask: u64,
+
     suffix_bits: u64,
     suffix_mask: u64,
 
@@ -41,15 +42,17 @@ impl FilterBuilder for Builder {
         }
     }
 
-    fn build(self, false_positive_pow: usize) -> Result<Self::Filter, Self::Error> {
-        todo!()
+    fn build(mut self, false_positive_pow: usize) -> Result<Self::Filter, Self::Error> {
+        self.false_positive_pow = false_positive_pow as u64;
+        let f = self.build_it();
+        Ok(f)
     }
 }
 
 impl Builder {
-    pub fn new(false_positive_pow: usize) -> Self {
+    pub fn new(false_positive_pow: u64) -> Self {
         Self {
-            false_positive_pow: false_positive_pow as u64,
+            false_positive_pow,
             keys: Default::default(),
             param: Default::default(),
         }
@@ -59,45 +62,21 @@ impl Builder {
     /// 1. find min suffix size
     /// 2. for every group: build suffix
     fn build_it(&mut self) -> SlimFilter {
-        //
-
         self.init_param();
 
         let segs = self.build_segments();
 
         self.init_suffix_param(&segs);
         let suffixes = self.build_suffixes(&segs);
+        // println!("suffixes: {}", suffixes.words());
 
         self.init_partition_param(&segs);
-        self.build_partition_keys(&segs);
-
-        // build partition keys:
-
-        let mut partition_keys = Vec::with_capacity(segs.len());
-        for seg in segs.iter() {
-            partition_keys.push(seg.keys[63]);
-        }
-
-        // find smallest partition key bits
-
-        let mut partition_key_bits = 0;
-        let mut it = partition_keys.iter();
-        let first = it.next().unwrap();
-        for pk in it {
-            let x = first ^ (*pk);
-            let key_bits = x.leading_zeros() as u64 + 1;
-            partition_key_bits = std::cmp::max(partition_key_bits, key_bits);
-        }
-
-        // bulid partition index:
-        let mut partition_index =
-            Bitmap::new(partition_key_bits * segs.len() as u64, partition_key_bits);
-        for (i, pk) in partition_keys.iter().enumerate() {
-            partition_index.push_word(pk >> (64 - partition_key_bits));
-        }
+        let partition_index = self.build_partition_keys(&segs);
+        // println!("partition_keys: {}", partition_index.words());
 
         SlimFilter {
-            partition_key_bits,
+            word_bits: self.param.word_bits,
+            partition_key_bits: self.param.partition_key_bits,
             partitions: partition_index,
             suffix_bits: self.param.suffix_bits,
             suffixes,
@@ -166,22 +145,46 @@ impl Builder {
             self.param.partition_key_bits,
         );
 
-        for seg in segs.iter() {
-            partition_keys.push_word(seg.keys[0] >> (64 - self.param.partition_key_bits));
+        if self.param.partition_key_bits > 0 {
+            let mut prev = None;
+            for seg in segs.iter() {
+                let k = seg.keys[63] >> (64 - self.param.partition_key_bits);
+                partition_keys.push_word(k);
+
+                assert!(prev != Some(k));
+                prev = Some(k);
+            }
         }
 
         partition_keys
     }
 
-    /// Use the max common prefix length of every segment,
+    /// Use the max common prefix length+1 of every segment,
     /// guarantees that all these prefixes are ascending.
     fn init_partition_param(&mut self, segs: &[Segment]) {
-        let mut partition_key_bits = 0;
+        let mut pks = Vec::with_capacity(segs.len() * 2);
         for seg in segs.iter() {
-            let s = seg.big_suffix_bits();
-            let p = self.param.word_bits - s;
-            partition_key_bits = std::cmp::max(partition_key_bits, p);
+            pks.push(seg.keys[0]);
+            pks.push(seg.keys[63]);
         }
+
+        let mut partition_key_bits = 0;
+        for i in 0..pks.len() - 1 {
+            let sig = (pks[i] ^ pks[i + 1]).leading_zeros();
+            // Use the max common prefix length+1 of every segment,
+            let pk_len = sig + 1;
+            let pk_len = std::cmp::min(pk_len as u64, self.param.word_bits);
+            partition_key_bits = std::cmp::max(partition_key_bits, pk_len);
+        }
+
+        // for seg in segs.iter() {
+        //     let s = seg.big_suffix_bits();
+        //     // println!("seg suffix bits: {}", s);
+        //     let p = self.param.word_bits - s;
+        //     partition_key_bits = std::cmp::max(partition_key_bits, p);
+        // }
+
+        partition_key_bits += 1;
 
         self.param.partition_key_bits = partition_key_bits;
         self.param.partition_key_mask = (1 << partition_key_bits) - 1;
@@ -218,7 +221,15 @@ impl Builder {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::hash_map::DefaultHasher;
+    use std::collections::BTreeSet;
+    use std::hash::BuildHasher;
+    use std::hash::BuildHasherDefault;
+    use std::hash::Hash;
+    use std::hash::Hasher;
+
     use crate::builder::Builder;
+    use crate::traits::Filter;
     use crate::traits::FilterBuilder;
     use crate::traits::Key;
 
@@ -268,7 +279,7 @@ mod tests {
             0b01_0100 << shift,
             0b01_1000 << shift,
         ]);
-        let p = b.init_param();
+        b.init_param();
 
         let segs = b.build_segments();
         assert_eq!(1, segs.len());
@@ -287,7 +298,7 @@ mod tests {
         for i in 1..67 {
             b.add_keys(&[i << shift]);
         }
-        let p = b.init_param();
+        b.init_param();
 
         let segs = b.build_segments();
 
@@ -340,6 +351,7 @@ mod tests {
         assert_eq!(11, b.param.suffix_bits);
 
         let suffixes = b.build_suffixes(&segs);
+        println!("suffixes: {}", suffixes.words());
 
         assert_eq!(0b000_0001_0000, suffixes.get_word(0));
         assert_eq!(0b100_0000_0000, suffixes.get_word(63));
@@ -396,5 +408,65 @@ mod tests {
 
         assert_eq!(0, pks.get_word(0));
         assert_eq!(0b010000, pks.get_word(1));
+    }
+
+    #[test]
+    fn test_filter() {
+        let x = BuildHasherDefault::<DefaultHasher>::default();
+
+        let n = 1 << 20;
+        let n = 100;
+
+        let ks: BTreeSet<u64> = (0..n)
+            .map(|i| {
+                let hashed_key = {
+                    let mut hasher = x.build_hasher();
+                    i.hash(&mut hasher);
+                    hasher.finish()
+                };
+                // println!("{:064b}", hashed_key);
+                hashed_key
+            })
+            .collect();
+
+        let keys = ks.iter().copied().collect::<Vec<_>>();
+
+        let mut b = Builder::new(8);
+
+        b.add_keys(&keys);
+        let f = b.build(8).unwrap();
+        println!("filter: {}", f.display(true));
+
+        // 111110001001011
+        // 101111111101100
+
+        println!(": {:b}", 13823855910875200017u64);
+        f.contains(&13823855910875200017u64);
+
+        for k in keys.iter() {
+            assert!(f.contains(k), "{} is in filter", k);
+        }
+
+        let mut hit = 0;
+        let mut miss = 0;
+        let ratio = 100;
+        for i in n..n * ratio {
+            let hashed_key = {
+                let mut hasher = x.build_hasher();
+                i.hash(&mut hasher);
+                hasher.finish()
+            };
+
+            if ks.contains(&hashed_key) {
+                continue;
+            }
+
+            if f.contains(&hashed_key) {
+                hit += 1;
+            } else {
+                miss += 1;
+            }
+        }
+        println!("hit: {}, miss: {}, 1/fp: {}", hit, miss, miss / (hit + 1))
     }
 }

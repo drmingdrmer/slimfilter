@@ -1,9 +1,38 @@
+use std::fmt::Display;
+use std::fmt::Formatter;
+
 use crate::util::next_multiple_of;
 
 pub(crate) struct Bitmap {
     pub(crate) word_bits: u64,
     pub(crate) word_count: u64,
     pub(crate) bm: Vec<u64>,
+}
+
+pub(crate) struct DisplayBitmap<'a> {
+    bm: &'a Bitmap,
+}
+
+impl<'a> Display for DisplayBitmap<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "word_bits: {}, word_count: {}\n",
+            self.bm.word_bits, self.bm.word_count
+        )?;
+
+        for i in 0..self.bm.word_count {
+            write!(
+                f,
+                "{:05}: {:0width$b}\n",
+                i,
+                self.bm.get_word(i),
+                width = self.bm.word_bits as usize
+            )?;
+        }
+
+        Ok(())
+    }
 }
 
 impl Bitmap {
@@ -14,6 +43,11 @@ impl Bitmap {
             word_count: 0,
             bm: vec![0; next_multiple_of(n, 64) as usize / 64],
         }
+    }
+
+    pub(crate) fn words(&self) -> DisplayBitmap {
+        //
+        DisplayBitmap { bm: &self }
     }
 
     pub(crate) fn set(&mut self, i: u64) {
@@ -60,12 +94,29 @@ impl Bitmap {
     pub(crate) fn find(&self, word: u64) -> u64 {
         let mut left: isize = -1;
         let mut right = self.word_count as isize;
-        let mut w = 0;
 
         while left < right - 1 {
             let mid = (left + right) / 2;
 
-            w = self.get_word(mid as u64);
+            let w = self.get_word(mid as u64);
+
+            if word > w {
+                left = mid;
+            } else {
+                right = mid;
+            }
+        }
+        right as u64
+    }
+
+    pub(crate) fn find_range(&self, word: u64, from: isize, to: isize) -> u64 {
+        let mut left: isize = from - 1;
+        let mut right = to;
+
+        while left < right - 1 {
+            let mid = (left + right) / 2;
+
+            let w = self.get_word(mid as u64);
 
             if word > w {
                 left = mid;
@@ -102,7 +153,6 @@ mod tests {
 
     #[test]
     fn test_set() {
-        let mut bm = Bitmap::new(65, 3);
         let mut bm = Bitmap::new(65, 3);
         bm.set(5);
         bm.set(7);
@@ -149,6 +199,7 @@ mod tests {
             assert_eq!(0b0, bm.get_word(3));
         }
     }
+
     #[test]
     fn test_find_word() {
         let mut bm = Bitmap::new(64 * 3, 31);
@@ -167,5 +218,24 @@ mod tests {
         assert_eq!(2, bm.find(0b1001));
 
         assert_eq!(3, bm.find(0b1010));
+    }
+
+    #[test]
+    fn test_find_range() {
+        let mut bm = Bitmap::new(64 * 3, 31);
+        bm.push_word(0b0101);
+        bm.push_word(0b0111);
+        bm.push_word(0b1001);
+
+        assert_eq!(0, bm.find_range(0b0001, 0, 1));
+        assert_eq!(0, bm.find_range(0b0101, 0, 1));
+        assert_eq!(1, bm.find_range(0b0101, 1, 3));
+
+        assert_eq!(1, bm.find_range(0b0110, 0, 1));
+
+        assert_eq!(1, bm.find_range(0b1000, 0, 1));
+        assert_eq!(1, bm.find_range(0b1001, 0, 1));
+
+        assert_eq!(2, bm.find_range(0b1010, 0, 2));
     }
 }
